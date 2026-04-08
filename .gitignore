@@ -1,0 +1,8 @@
+obmm_test
+*.o
+*.so
+*.a
+*.log
+*.tmp
+core
+.DS_Store
