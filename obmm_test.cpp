@@ -4,6 +4,7 @@
  * 基于 ubs-mem 库中 ubsmem_shmem_map 的实现原理，
  * 直接打开 /dev/obmm_shmdev<id> 设备并进行 mmap 读写测试。
  *
+ * 支持架构: x86_64, aarch64 (ARM64)
  * 编译: g++ -O2 -o obmm_test obmm_test.cpp
  * 运行: sudo ./obmm_test <obmm_dev_id>
  * 示例: sudo ./obmm_test 0
@@ -31,6 +32,10 @@
 /* ──────────────────── 物理地址查询 ──────────────────── */
 /**
  * 通过 /proc/self/pagemap 将虚拟地址转换为物理地址。
+ *
+ * 兼容性说明:
+ *   - x86_64:  PFN 在 bit[0-54]（55 位物理地址空间）
+ *   - aarch64: PFN 在 bit[0-47]（4K 页，48-bit IPA）
  * 注意：普通用户可能无权限读取 pagemap，返回 0。
  */
 static uint64_t virt_to_phys(void* vaddr) {
@@ -40,7 +45,6 @@ static uint64_t virt_to_phys(void* vaddr) {
     uint64_t page_size = (uint64_t)sysconf(_SC_PAGESIZE);
     uint64_t vpage_num = (uint64_t)vaddr / page_size;
 
-    /* 使用 fseeko 而非 fseek，避免大虚拟地址时 off_t 溢出 */
     off_t offset = (off_t)(vpage_num * sizeof(uint64_t));
     if (fseeko(f, offset, SEEK_SET) != 0) {
         fclose(f);
@@ -54,15 +58,21 @@ static uint64_t virt_to_phys(void* vaddr) {
     }
     fclose(f);
 
-    // bit 63 = 1 表示页位于物理 RAM
+    // bit 63 = 1 表示页位于物理 RAM（x86_64 和 ARM64 均适用）
     if (!(entry & (1ULL << 63))) return 0;
 
-    // bit 0-54 是物理页号
+#if defined(__aarch64__)
+    // ARM64 4K 页: PFN 在 bit[0-47]
+    uint64_t phys_page = entry & ((1ULL << 48) - 1);
+#else
+    // x86_64: PFN 在 bit[0-54]
     uint64_t phys_page = entry & ((1ULL << 55) - 1);
+#endif
+
     return phys_page * page_size + ((uint64_t)vaddr % page_size);
 }
 
-/* 打印映射地址的详细信息 */
+/* ──────────────────── 地址信息打印 ──────────────────── */
 static void print_addr_info(void* mapped, size_t size) {
     uint64_t phys_start = virt_to_phys(mapped);
     printf("  虚拟地址范围: %p ~ %p (共 %zu 字节)\n",
