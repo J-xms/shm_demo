@@ -19,9 +19,10 @@
 #include <cerrno>
 #include <chrono>
 #include <atomic>
+#include <inttypes.h>   // PRIu64 / PRIx64
 
 /* ──────────────────── 配置 ──────────────────── */
-#define DEV_PATH_FMT       "/dev/obmm_shmdev%llu"
+#define DEV_PATH_FMT       "/dev/obmm_shmdev%" PRIu64
 #define DEV_PATH_LEN       64
 #define TEST_SIZE          (4096)         // 每次映射 4KB
 #define ITERATIONS         (100000)       // 读写 10 万次
@@ -39,7 +40,9 @@ static uint64_t virt_to_phys(void* vaddr) {
     uint64_t page_size = (uint64_t)sysconf(_SC_PAGESIZE);
     uint64_t vpage_num = (uint64_t)vaddr / page_size;
 
-    if (fseek(f, (long)(vpage_num * sizeof(uint64_t)), SEEK_SET) != 0) {
+    /* 使用 fseeko 而非 fseek，避免大虚拟地址时 off_t 溢出 */
+    off_t offset = (off_t)(vpage_num * sizeof(uint64_t));
+    if (fseeko(f, offset, SEEK_SET) != 0) {
         fclose(f);
         return 0;
     }
@@ -65,9 +68,8 @@ static void print_addr_info(void* mapped, size_t size) {
     printf("  虚拟地址范围: %p ~ %p (共 %zu 字节)\n",
            mapped, (uint8_t*)mapped + size - 1, size);
     if (phys_start != 0) {
-        printf("  物理地址范围: 0x%016llx ~ 0x%016llx\n",
-               (unsigned long long)phys_start,
-               (unsigned long long)(phys_start + size - 1));
+        printf("  物理地址范围: 0x%016" PRIx64 " ~ 0x%016" PRIx64 "\n",
+               phys_start, phys_start + size - 1);
     } else {
         printf("  物理地址:     (普通用户无权读取 pagemap，请使用 root)\n");
     }
@@ -116,7 +118,7 @@ int main(int argc, char* argv[]) {
 
     /* 1. 打开 OBMM 设备 */
     char dev_path[DEV_PATH_LEN];
-    snprintf(dev_path, sizeof(dev_path), DEV_PATH_FMT, (unsigned long long)dev_id);
+    snprintf(dev_path, sizeof(dev_path), DEV_PATH_FMT, dev_id);
 
     int fd = open(dev_path, O_RDWR);
     if (fd < 0) {
@@ -149,7 +151,7 @@ int main(int argc, char* argv[]) {
     for (uint64_t i = 1; i <= ITERATIONS; ++i) {
         write_data(static_cast<uint8_t*>(mapped), TEST_SIZE, i);
         if (!read_data(static_cast<uint8_t*>(mapped), TEST_SIZE, i)) {
-            fprintf(stderr, "[错误] 第 %llu 次校验失败!\n", (unsigned long long)i);
+            fprintf(stderr, "[错误] 第 %" PRIu64 " 次校验失败!\n", i);
             break;
         }
         ++ok;
@@ -158,10 +160,10 @@ int main(int argc, char* argv[]) {
             auto now = std::chrono::high_resolution_clock::now();
             double elapsed = std::chrono::duration<double, std::milli>(now - start).count();
             if (elapsed < 0.001) elapsed = 0.001;  // 防除零
-            printf("[%06llu] 虚拟地址: %p | 物理地址: 0x%llx | "
+            printf("[%06" PRIu64 "] 虚拟地址: %p | 物理地址: 0x%08" PRIx64 " | "
                    "耗时: %.2f ms | 吞吐: %.2f 万次/s\n",
-                   (unsigned long long)i, mapped,
-                   (unsigned long long)virt_to_phys(mapped),
+                   i, mapped,
+                   (uint64_t)virt_to_phys(mapped),
                    elapsed, i * 1000.0 / elapsed / 10000.0);
         }
     }
@@ -171,11 +173,11 @@ int main(int argc, char* argv[]) {
 
     printf("\n========== 测试结果 ==========\n");
     printf("读写次数:   %d 次\n", ITERATIONS);
-    printf("成功次数:   %llu 次\n", (unsigned long long)ok.load());
+    printf("成功次数:   %" PRIu64 " 次\n", ok.load());
     printf("总耗时:     %.2f ms\n", ms);
     printf("平均单次:   %.3f 微秒\n", ms * 1000.0 / ITERATIONS);
     printf("最终虚拟地址: %p\n", mapped);
-    printf("最终物理地址: 0x%llx\n", (unsigned long long)virt_to_phys(mapped));
+    printf("最终物理地址: 0x%08" PRIx64 "\n", (uint64_t)virt_to_phys(mapped));
     printf("==============================\n");
 
     munmap(mapped, TEST_SIZE);
