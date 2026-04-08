@@ -76,7 +76,7 @@ static uint64_t virt_to_phys(void* vaddr) {
 static void print_addr_info(void* mapped, size_t size) {
     uint64_t phys_start = virt_to_phys(mapped);
     printf("  虚拟地址范围: %p ~ %p (共 %zu 字节)\n",
-           mapped, (uint8_t*)mapped + size - 1, size);
+           mapped, (void*)((uint8_t*)mapped + size - 1), size);
     if (phys_start != 0) {
         printf("  物理地址范围: 0x%016" PRIx64 " ~ 0x%016" PRIx64 "\n",
                phys_start, phys_start + size - 1);
